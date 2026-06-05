@@ -1,0 +1,177 @@
+FUNCTION_BLOCK "RateLimiter"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.1
+   VAR_INPUT 
+      target : Real;                 // AI输出目标值
+      maxRateUp : Real := 5.0;       // 最大上升速率（单位/秒）
+      maxRateDown : Real := 10.0;    // 最大下降速率（单位/秒）
+      cycleTime : Real := 0.01;      // OB1扫描周期（秒），通常 5~15ms
+      enable : Bool := TRUE;         // 斜坡使能
+      reset : Bool;                  // 复位：输出立即跳变到 target
+   END_VAR
+
+   VAR_OUTPUT 
+      output : Real;                 // 平滑后的输出值
+      isLimited : Bool;              // TRUE = 正在限幅
+   END_VAR
+
+   VAR
+      lastOutput : Real;             // 上周期输出值（静态保持）
+      initDone : Bool;               // 初始化完成标志
+   END_VAR
+
+   VAR_TEMP 
+      delta : Real;                  // 与目标的偏差
+      maxStep : Real;                // 本周期允许的最大步长
+   END_VAR
+
+
+BEGIN
+	// ===================================================================
+	// RateLimiter — 防震荡物理护盾
+	// 将高频跳变的目标值平滑为有限速率的变化曲线，保护物理设备
+	// ===================================================================
+	
+	// --- 首次调用：避免从 0 跳到目标值的阶跃 ---
+	IF NOT #initDone THEN
+	    #output := #target;
+	    #lastOutput := #target;
+	    #initDone := TRUE;
+	    #isLimited := FALSE;
+	    RETURN;
+	END_IF;
+	
+	// --- 复位模式 ---
+	IF #reset THEN
+	    #output := #target;
+	    #lastOutput := #target;
+	    #isLimited := FALSE;
+	    RETURN;
+	END_IF;
+	
+	// --- 正常斜坡控制 ---
+	IF #enable AND #cycleTime > 0.0 THEN
+	    #delta := #target - #lastOutput;
+	    
+	    IF #delta > 0.0 THEN
+	        // === 上升方向 ===
+	        #maxStep := #maxRateUp * #cycleTime;
+	        IF #delta > #maxStep THEN
+	            #output := #lastOutput + #maxStep;
+	            #isLimited := TRUE;
+	        ELSE
+	            #output := #target;
+	            #isLimited := FALSE;
+	        END_IF;
+	    ELSIF #delta < 0.0 THEN
+	        // === 下降方向 ===
+	        #maxStep := #maxRateDown * #cycleTime;
+	        IF -#delta > #maxStep THEN
+	            #output := #lastOutput - #maxStep;
+	            #isLimited := TRUE;
+	        ELSE
+	            #output := #target;
+	            #isLimited := FALSE;
+	        END_IF;
+	    ELSE
+	        // delta = 0，目标未变化
+	        #output := #target;
+	        #isLimited := FALSE;
+	    END_IF;
+	ELSE
+	    // 斜坡禁用或周期无效 — 直通模式
+	    #output := #target;
+	    #isLimited := FALSE;
+	END_IF;
+	
+	// --- 保存本周期的输出，供下周期使用 ---
+	#lastOutput := #output;
+END_FUNCTION_BLOCK
+
+
+DATA_BLOCK "inst_RL_F"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.1
+NON_RETAIN
+   "RateLimiter"
+BEGIN
+   
+END_DATA_BLOCK
+
+
+DATA_BLOCK "inst_RL_A"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.1
+NON_RETAIN
+   "RateLimiter"
+BEGIN
+   
+END_DATA_BLOCK
+
+
+ORGANIZATION_BLOCK "OB_main"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.1
+   VAR_TEMP 
+      hbRead : Int;
+   END_VAR
+
+BEGIN
+	// ================================================================
+	// 1. 心跳检测（必须放在通信接管之前）
+	// ================================================================
+	#hbRead := "DB1".Remote_Heartbeat;
+	
+	IF #hbRead <> "DB1".Last_Heartbeat THEN
+	    "DB1".Remote_Comms_OK := TRUE;
+	    "DB1".Watchdog_Timer := 0;
+	ELSE
+	    "DB1".Watchdog_Timer := "DB1".Watchdog_Timer + 1;
+	    IF "DB1".Watchdog_Timer > 300 THEN       // 3秒超时 (300 x 10ms)
+	        "DB1".Remote_Comms_OK := FALSE;
+	    END_IF;
+	END_IF;
+	
+	"DB1".Last_Heartbeat := #hbRead;
+	
+	// ================================================================
+	// 2. 通信接管 — AI 在线 / 保命模式
+	//    → 输出到 Ramp_Target，不经 RateLimiter 不直接驱动阀门
+	// ================================================================
+	IF "DB1".Remote_Comms_OK THEN
+	    "DB1".Ramp_Target_F := "DB1".Valve_F_Opt_SP;
+	    "DB1".Ramp_Target_A := "DB1".Valve_A_Opt_SP;
+	    "DB1".System_Alarm_Light := FALSE;
+	ELSE
+	    "DB1".Ramp_Target_F := 0.3;
+	    "DB1".Ramp_Target_A := 0.1;
+	    "DB1".System_Alarm_Light := TRUE;
+	END_IF;
+	
+	// ================================================================
+	// 3. 防震荡护盾 RateLimiter
+	//    将 Ramp_Target 平滑过渡到 Actual_Valve
+	// ================================================================
+	"inst_RL_F"(target    := "DB1".Ramp_Target_F,
+	            maxRateUp := 5.0,
+	            maxRateDown := 10.0,
+	            cycleTime := 0.01,
+	            enable    := TRUE,
+	            reset     := "M1.0");           // FirstScan
+	"DB1".Actual_Valve_F := "inst_RL_F".output;
+	
+	"inst_RL_A"(target    := "DB1".Ramp_Target_A,
+	            maxRateUp := 5.0,
+	            maxRateDown := 10.0,
+	            cycleTime := 0.01,
+	            enable    := TRUE,
+	            reset     := "M1.0");           // FirstScan
+	"DB1".Actual_Valve_A := "inst_RL_A".output;
+	
+	// ================================================================
+	// 4. 模拟量输出缩放 (0.0~1.0 → 0~27648)
+	// ================================================================
+	"DB1".AQ_Valve_F_Raw := REAL_TO_INT("DB1".Actual_Valve_F * 27648.0);
+	"DB1".AQ_Valve_A_Raw := REAL_TO_INT("DB1".Actual_Valve_A * 27648.0);
+	
+END_ORGANIZATION_BLOCK

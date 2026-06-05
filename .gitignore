@@ -1,0 +1,7 @@
+Logs/
+TMP/
+*.bak
+*.tmp
+*.lck
+*.lock
+~$*
