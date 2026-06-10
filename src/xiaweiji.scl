@@ -159,6 +159,14 @@ NON_RETAIN
       Active_pH_SP : Real;   // PLC 实际采用的 pH 目标
       Setpoint_Protection_Active : Bool;   // SAC 目标越界时置 TRUE
       Stage_Auto_SP_Enable : Bool;   // TRUE=PLC 根据 Growth_Stage 自动写 EC_Set_SP/pH_Set_SP
+
+      // PID 在线调参区。Python 粗调或 TIA 监控表可直接写这些值。
+      Kp_EC_Set : Real;   // EC 比例增益
+      Ki_EC_Set : Real;   // EC 积分增益
+      Kd_EC_Set : Real;   // EC 微分增益
+      Kp_pH_Set : Real;   // pH 比例增益
+      Ki_pH_Set : Real;   // pH 积分增益
+      Kd_pH_Set : Real;   // pH 微分增益
    END_STRUCT;
 
 
@@ -191,6 +199,12 @@ BEGIN
    Active_pH_SP := 5.9;
    Setpoint_Protection_Active := false;
    Stage_Auto_SP_Enable := true;
+   Kp_EC_Set := 1.20;
+   Ki_EC_Set := 0.0;
+   Kd_EC_Set := 0.0;
+   Kp_pH_Set := 1.20;
+   Ki_pH_Set := 0.01;
+   Kd_pH_Set := 0.0;
 
 END_DATA_BLOCK
 
@@ -617,12 +631,12 @@ BEGIN
       SAC_Enable := "DB1".SAC_Enable,
       Remote_Heartbeat := "DB1".Remote_Heartbeat,
       CycleTime := 0.1,
-      Kp_EC := 1.20,
-      Ki_EC := 0.0,
-      Kd_EC := 0.0,
-      Kp_pH := 1.20,
-      Ki_pH := 0.01,
-      Kd_pH := 0.0,
+      Kp_EC := "DB1".Kp_EC_Set,
+      Ki_EC := "DB1".Ki_EC_Set,
+      Kd_EC := "DB1".Kd_EC_Set,
+      Kp_pH := "DB1".Kp_pH_Set,
+      Ki_pH := "DB1".Ki_pH_Set,
+      Kd_pH := "DB1".Kd_pH_Set,
       EC_Filter_Tau := 2.0,
       pH_Filter_Tau := 2.0,
       EC_Deadband := 0.03,
