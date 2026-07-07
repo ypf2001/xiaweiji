@@ -1,7 +1,14 @@
 Logs/
 TMP/
+tmp/
 *.bak
 *.tmp
 *.lck
 *.lock
 ~$*
+
+# TIA Portal generated search/cache metadata. Keep the project files, but do
+# not let regenerated indexes or transient info files pollute acceptance state.
+IM/SearchIndex/
+System/~PEData.*
+xiaweiji.info
